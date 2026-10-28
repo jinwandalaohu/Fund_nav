@@ -1,12 +1,55 @@
 # 基金实时估值系统（纯后端 · 数据只写 SQLite）
 
-按 YAML 配置的基金列表，盘中定时抓取**直接估值**或**持仓 + 个股行情**，计算估值后写入
-SQLite3。**没有前端页面、没有 Web 服务、没有报表渲染** —— 进程的唯一产出就是数据库里的行。
+[![fetch-data](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml/badge.svg)](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml)
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)
+![deps](https://img.shields.io/badge/runtime_deps-4-informational)
+![UI](https://img.shields.io/badge/UI-none-lightgrey)
+
+按 YAML 配置的基金清单，在盘中定时抓取**接口直接估值**或**季报持仓 × 个股行情**，算出每只基金的
+估算涨跌，写入 SQLite3。**没有前端页面、没有 Web 服务、没有报表渲染** —— 进程的唯一产出就是数据库里的行。
+
+> 一句话：把「这只基金现在大概涨跌多少」变成一行可查询的记录，并如实标注这个数字**有多可信**。
+
+**适用标的**：场外主动/指数基金、LOF、场内 ETF、ETF 联接基金。
+**数据来源**：天天基金、东方财富、腾讯、新浪的公开接口，**不需要申请任何 token**。
+
+### 它做什么 / 不做什么
+
+| 做 | 不做 |
+|---|---|
+| 定时抓取并归档每只基金的盘中估值 | 不提供 Web 界面、HTTP API 或图表 |
+| 接口没有估值时，用季报前十大权重 × 个股涨跌合成 | 不预测净值，不给买入/卖出建议 |
+| 记录 `source` / `confidence` / `coverage_pct`，说明数字的来源与可信度 | 不保证实时性（取决于第三方接口可用性） |
+| 单只基金失败只落一条 `failed`，不拖累同批其它基金 | 不做回测、组合管理，也不接券商下单 |
+
+### 一轮估值是怎么算出来的
+
+```mermaid
+flowchart TD
+    CFG["fund_config.yml：基金清单 + 运行时参数"] --> RUN["每轮估值（--once / 常驻轮询）"]
+    RUN --> D{"接口直接给估值？"}
+    D -->|"有 GSZ/GSZZL"| API["source=api<br/>数据源权威值"]
+    D -->|"空值 / 明确不支持"| S{"能拿到持仓？"}
+    S -->|"前十大权重 × 个股涨跌"| SYN["source=synthetic<br/>归一化 + coverage"]
+    S -->|"无持仓（联接基金常态）"| FB["source=fallback<br/>目标 ETF 行情代理"]
+    API --> DB[("SQLite 三张表<br/>funds / holdings_snapshot / valuation")]
+    SYN --> DB
+    FB --> DB
+    DB -.->|"24h 内快照直接复用"| S
+```
+
+三条轨道的分工：`direct` 是数据源给的权威值，能用就优先用；`synthetic` 是「用季报持仓近似推算」，
+只在没有权威值时出场，且必须同时给出覆盖率；`fallback` 用于联接基金（股票明细只剩 1%–3% 残余仓位），
+直接用目标 ETF 的涨跌代理。逐分支细节见 [PIPELINE.md](PIPELINE.md)。
+
+### 核心特性
 
 - 双轨估值：接口直接取值（`api`）优先，缺失时自动降级为持仓加权合成（`synthetic`）
 - 多源备份：估值、持仓、行情三条链路各有主备数据源，单个接口失效不影响整批
 - 可解释性：`source` / `confidence` / `coverage_pct` / `error_msg` 如实记录，下游可判断可信度
 - 单只基金失败只落一条 `failed` 记录，不影响同批其它基金
+- 可在 30 秒内跑完一轮并退出，天然适合 cron / GitHub Actions 定时任务（见 [8.1](#81-github-actions-定时采集)）
 
 ---
 
