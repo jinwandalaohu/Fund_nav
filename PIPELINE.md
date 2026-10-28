@@ -137,7 +137,7 @@ for source in self._sources:                      # direct.py:75
 
 ### 4.3 响应解析
 
-`_extract_rows()`（`tiantian.py:225`）对包裹层做兼容：`Datas` / `datas` / `data` / `Data`，
+`_extract_rows()`（`tiantian.py:229`）对包裹层做兼容：`Datas` / `datas` / `data` / `Data`，
 列表或嵌套字典都试一遍。**实测该接口返回小写 `data`**，写死 `Datas` 会全军覆没。
 
 字段映射（`tiantian.py:72`）：
@@ -197,7 +197,7 @@ if cached and cached.holdings:
 又容易被限流。实际运行中可以看到 `data_source` 从 `eastmoney:mobile+tencent`
 变为 `db:snapshot+tencent`，就是命中了快照。
 
-### 5.2 主源：东财移动端 JSON（`eastmoney.py:41`）
+### 5.2 主源：东财移动端 JSON（`eastmoney.py:43`）
 
 ```
 GET https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition
@@ -211,33 +211,46 @@ Headers: 移动端 iPhone UA + Referer: https://h5.1234567.com.cn/
 2. **H5 Referer**：同上
 3. `plat=WAP` / `deviceid=Wap`：标识来自 H5 端
 
-错误判定（`eastmoney.py:80`）：
+错误判定（`eastmoney.py:82`）：
 
 ```python
 if payload.get("Success") is False or payload.get("ErrCode") not in (0, None):
     raise DataSourceError(...)          # 带上 ErrCode 与 ErrMsg，便于排查
 ```
 
-解析（`eastmoney.py:87`）：取 `Datas.fundStocks[]`，逐项映射
+解析（`eastmoney.py:89`）：取 `Datas.fundStocks[]`，逐项映射
 
 | 接口字段 | 含义 | 处理 |
 |---|---|---|
 | `GPDM` | 股票代码 | 保留原始形态（`600519` / `00700`），**不加前缀** |
 | `GPJC` | 股票简称 | 名称 |
-| `JZBL` | 占净值比例 | `normalize_weight()` 统一为小数 |
+| `JZBL` | 占净值比例 | `_weight_to_decimal()` 按声明的 `weight_unit` 换算 |
 
-`normalize_weight()`（`html.py:65`）的口径归一：
+权重单位由**数据源显式声明**，解析器不做任何推断：
 
 ```python
-return number / 100.0 if number > 1.0 else number     # 9.53 → 0.0953；0.0953 原样
+# models.py — 单位是接口字段的固有属性，不是数值的性质
+class WeightUnit(StrEnum):
+    PERCENT = "percent"    # "9.53" / "9.53%"  → 9.53%
+    DECIMAL = "decimal"    # 0.0953            → 9.53%
+
+# datasource/base.py — 每个持仓源声明一次，解析处统一调 _weight_to_decimal()
+class EastmoneyHoldingsSource(HoldingsSource):
+    weight_unit = WeightUnit.PERCENT
+
+# utils/html.py — 换算只认声明
+return number / 100.0 if unit is WeightUnit.PERCENT else number
 ```
 
-因为三个来源口径不同：东财移动端 `JZBL` 给 `9.53`、F10 表格给 `"9.53%"`、
-个别源直接给 `0.0953`。以 1.0 为界是可靠的判据（单只股票占净值不可能超过 100%）。
+**为什么不能按数值大小推断**：联接基金 95% 资产在目标 ETF 里，股票明细只剩残余仓位，
+`JZBL` 会给出 `0.52`（0.52%）。旧实现用「>1 才除以 100」的判据，会把它当成 52%，
+前十大合计变成 253%，`coverage_pct > 1` 这种不可能值反而被标成 `high` 置信度。
+单位猜错是 100 倍偏差，且结果"有数"，属于最难发现的静默错误，
+因此把口径提升为数据源的一等声明，新增源必须核对真实返回值后再声明。
 
 报告期取 `payload["Expansion"]`（如 `2026-09-30`）。最后按权重降序、取前 10 只。
 
-### 5.3 备源：天天基金档案接口（`tiantian.py:97`）
+### 5.3 备源：天天基金档案接口（`tiantian.py:100`）
 
 ```
 GET https://fundf10.eastmoney.com/FundArchivesDatas.aspx
@@ -260,7 +273,7 @@ var apidata={ content:"<table>...<tr><td>600519</td>...</tr></table>",arryear:[.
 `ccmx_{code}.html` 已改为 JS 渲染，静态 HTML 里没有表格；
 `api.fund.eastmoney.com/f10/ccmx` 已 404。所以静态解析落在档案接口上，与移动端 JSON 互为备份。
 
-### 5.4 表格解析：按表头定位列，不写死下标（`html.py:81`）
+### 5.4 表格解析：按表头定位列，不写死下标（`html.py:83`）
 
 ```python
 _CODE_HEADERS   = ("股票代码", "债券代码", "证券代码", "代码")
@@ -275,7 +288,7 @@ _WEIGHT_HEADERS = ("占净值比例", "占净值比率", "市值占净值比")
 - 多个表格命中时，取**行数最多的**那个（页面顶部常有迷你持仓卡片）
 - 最后降序取前 10 只
 
-报告期解析支持三种格式（`html.py:131`）：
+报告期解析支持三种格式（`html.py:138`）：
 
 | 页面写法 | 输出 |
 |---|---|
@@ -294,7 +307,7 @@ raise DataSourceError(self.name, f"{fund_code} 持仓获取失败: " + " | ".joi
 
 ---
 
-## 6. 阶段 4：基准净值（`tiantian.py:141`）
+## 6. 阶段 4：基准净值（`tiantian.py:145`）
 
 两次尝试，都失败则本次估值放弃（没有基准净值就无法把涨跌幅换算成净值）。
 
@@ -308,7 +321,7 @@ GET https://fund.eastmoney.com/pingzhongdata/{code}.js?v=<毫秒时间戳>
 取第一个 `y > 0` 的点。倒序是因为序列按时间正序返回，最后一个才是最新净值；
 `y > 0` 过滤掉数据缺口。
 
-日期换算要注意：`x` 是毫秒时间戳，**需加 8 小时**再取日期（`tiantian.py:286`），
+日期换算要注意：`x` 是毫秒时间戳，**需加 8 小时**再取日期（`tiantian.py:290`），
 否则 UTC 换算会把 `2026-10-27` 的净值标成 `2026-10-26`。
 
 **策略 2：`lsjz`（兜底）**
@@ -549,7 +562,7 @@ db.save_valuations(results)                              # executemany
 三张表的写入顺序有依赖：先写持仓快照（顺带刷新 `funds.last_holdings_update`），
 再写估值。估值用 `ON CONFLICT(fund_code, ts) DO UPDATE`，同秒重算不产生重复行。
 
-`guess_fund_type()` 依据**名称**推断类型（`html.py:170`），判定顺序：
+`guess_fund_type()` 依据**名称**推断类型（`html.py:177`），判定顺序：
 `联接` → `ETF` → `LOF` → `指数` → `债`/`货币` → `股票` → `混合`。
 
 ---

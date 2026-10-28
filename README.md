@@ -71,7 +71,7 @@ fund_valuation/
 │   └── sina.py             # 新浪行情（备）+ 估值曲线（备）
 └── utils/
     ├── http.py             # UA、超时、重试、编码、代码归一化
-    ├── html.py             # 表头定位式表格解析、权重归一
+    ├── html.py             # 表头定位式表格解析、权重口径换算（percent/decimal 由源声明）
     ├── calendar.py         # 交易日/交易时段、下一窗口计算
     ├── timeutil.py         # ISO8601 与宽松时间解析
     └── logger.py           # 统一日志

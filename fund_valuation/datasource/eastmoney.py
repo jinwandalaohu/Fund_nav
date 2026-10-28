@@ -14,8 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ..models import AssetType, Holding, HoldingsSnapshot
-from ..utils.html import normalize_weight
+from ..models import AssetType, Holding, HoldingsSnapshot, WeightUnit
 from ..utils.logger import get_logger
 from .base import DataSourceError, HoldingsSource
 
@@ -37,6 +36,9 @@ class EastmoneyHoldingsSource(HoldingsSource):
 
     name = "eastmoney"
     MOBILE_API = "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition"
+    # JZBL 是百分数：普通基金 "6.37" 表示 6.37%，联接基金的残余持仓则是 "0.52" = 0.52%。
+    # 显式声明后，小于 1 的百分数不会再被误判成小数（详见 models.WeightUnit）。
+    weight_unit = WeightUnit.PERCENT
 
     def fetch_holdings(self, fund_code: str) -> HoldingsSnapshot:
         """请求 + 解析 + 组装快照。任何环节失败都抛 DataSourceError 以便换源。"""
@@ -102,8 +104,9 @@ class EastmoneyHoldingsSource(HoldingsSource):
             code = str(item.get("GPDM") or "").strip()
             if not code:
                 continue
-            # JZBL 是百分数（9.53 表示 9.53%），normalize_weight 统一转成小数。
-            weight = normalize_weight(item.get("JZBL"))
+            # JZBL 的口径由类属性 weight_unit 声明（百分数），这里不自行除以 100，
+            # 保证"单位"只在一处定义。
+            weight = self._weight_to_decimal(item.get("JZBL"))
             if weight <= 0:
                 # 权重缺失的持仓无法参与加权，计入分母只会引入噪声。
                 continue

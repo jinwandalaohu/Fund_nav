@@ -91,6 +91,22 @@ class AssetType(StrEnum):
     ETF = "etf"
 
 
+class WeightUnit(StrEnum):
+    """持仓权重的计量口径，由数据源**显式声明**，禁止按数值大小猜测。
+
+    PERCENT  "9.53" / "9.53%" 表示 9.53%（东财 JZBL、F10"占净值比例"列）
+    DECIMAL  0.0953 表示 9.53%（少数接口直接给小数）
+
+    为什么必须显式声明：单位是接口字段的固有属性，不是数值的性质。联接基金的
+    直接持股只有残余仓位（"0.52" 表示 0.52%），全表数值都小于 1；若用"大于 1
+    才除以 100"的启发式推断，会把 0.52% 放大成 52%，coverage 直接冲上 253%、
+    置信度误判为 high —— 而结果看起来"有数"，属于最难发现的静默错误。
+    """
+
+    PERCENT = "percent"
+    DECIMAL = "decimal"
+
+
 @dataclass(slots=True, frozen=True)
 class FundConfig:
     """单只待估值基金的配置（来自 YAML，加载时已完成校验）。

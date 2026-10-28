@@ -172,7 +172,7 @@ CREATE TABLE valuation (
 | `estimated_nav` | REAL | 是 | 估算单位净值，统一保留 4 位小数。`failed` / `not_supported` 时为 NULL | `1.3809` |
 | `estimated_change_pct` | REAL | 是 | **估算涨跌幅，百分数**（`-0.32` 表示跌 0.32%）。`GSZ` 为空时为 NULL；**例外**：`GZTIME` 判定为隔夜旧值时，该列会保留接口涨跌幅但 `status` 置为 `not_supported`，使用前必须看 `status` | `-0.32` |
 | `base_nav` | REAL | 是 | 基准单位净值，即"前一交易日净值"，估算的起算点，保留 4 位小数 | `1.3853` |
-| `coverage_pct` | REAL | 是 | **小数**。仅 `synthetic` 路径有值：实际参与计算的重仓股权重合计（已剔除无行情的个股）。`api` / `fallback` 为 NULL | `0.4262` |
+| `coverage_pct` | REAL | 是 | **小数**。仅 `synthetic` 路径有值：实际参与计算的重仓股权重合计（已剔除无行情的个股）。`api` / `fallback` 为 NULL。**取值必然 ≤ 1**——持仓占净值比例合计不可能超过 100%，若出现大于 1 说明权重口径解析错误 | `0.4262` |
 | `confidence` | TEXT | 是 | 置信度分档，见 §7.3。`not_supported` / `failed` 时为 NULL | `low` |
 | `source` | TEXT | 是 | **估值来源路径**，见 §7.2。这是判断数据可信度的首要字段 | `synthetic` |
 | `status` | TEXT | 是 | 结果状态，见 §7.1。**区分"失败"与"本就无估值"的关键** | `available` |

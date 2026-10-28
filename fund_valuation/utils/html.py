@@ -4,7 +4,7 @@
 而不是写死列下标 —— 这样页面改版时只需保证表头关键字不变即可继续工作。
 
 同时提供两个跨模块共用的小工具：
-- normalize_weight      统一权重口径（百分数 / 小数混杂）
+- normalize_weight      按声明的口径（percent/decimal）把权重转成小数
 - extract_report_date   从页面文本提取季报报告期
 """
 
@@ -16,7 +16,7 @@ from datetime import date
 
 from bs4 import BeautifulSoup
 
-from ..models import AssetType, Holding
+from ..models import AssetType, Holding, WeightUnit
 from .http import safe_float
 from .logger import get_logger
 
@@ -62,28 +62,35 @@ def _header_cells(row) -> list[str]:
     return [cell.get_text(strip=True) for cell in row.find_all(["th", "td"])]
 
 
-def normalize_weight(value: float | str | None) -> float:
-    """把权重统一为小数形式。
+def normalize_weight(
+    value: float | str | None, unit: WeightUnit = WeightUnit.PERCENT
+) -> float:
+    """按调用方**声明**的口径把权重转成小数形式（0.085 表示 8.5%）。
 
-    接口口径不统一：东财移动端 JZBL 是 "9.53"（百分比），F10 表格是 "9.53%"，
-    部分源直接给 0.0953。大于 1 一律按百分数处理，否则原样返回。
+    单位由数据源类型决定，不靠数值大小推断 —— 同一条 "0.52"，在百分数口径下
+    是 0.52%（联接基金的残余持仓），在小数口径下是 52%（单只股票占净值过半，
+    几乎不可能）。两种解释差 100 倍，猜错就会把 coverage 算成 253% 并标成
+    high 置信度，因此这里要求调用方明确传入 unit。
 
-    选 1.0 作为分界而非 0.5：单只股票占基金净值超过 100% 不可能，
-    因此 >1 必然是百分数；而 0.53 这种值若按百分数理解只有 0.0053，明显不合理。
+    value 缺失或非正数时返回 0.0，由调用方过滤（0 权重参与加权只会引入噪声）。
     """
     number = safe_float(value)
     if number is None or number <= 0:
-        # 缺失或负数权重无法参与加权，返回 0 由调用方过滤。
         return 0.0
-    return number / 100.0 if number > 1.0 else number
+    return number / 100.0 if unit is WeightUnit.PERCENT else number
 
 
-def parse_holdings_table(html: str) -> tuple[list[Holding], str | None]:
+def parse_holdings_table(
+    html: str, weight_unit: WeightUnit = WeightUnit.PERCENT
+) -> tuple[list[Holding], str | None]:
     """从持仓页面/片段中解析前十大重仓股，返回 (持仓列表, 报告期)。
 
     页面可能含多张表（资产配置表、行业配置表、持仓明细表），
     因此遍历所有 table，只保留"同时能定位到代码列与权重列"的那张，
     并在多张候选表中取行数最多的（明细表通常最完整）。
+
+    weight_unit 透传给 normalize_weight：网页"占净值比例"列一律带 % 后缀，
+    故默认 PERCENT；若将来接入给出小数的页面，由数据源显式传入 DECIMAL。
     """
     soup = _parse_soup(html)
     best: list[Holding] = []
@@ -112,7 +119,7 @@ def parse_holdings_table(html: str) -> tuple[list[Holding], str | None]:
             # 代码可能是 600519 / 00700 / AAPL / 019547.SH，限定字符集与长度过滤噪声。
             if not re.fullmatch(r"[0-9A-Za-z.]{2,12}", code):
                 continue
-            weight = normalize_weight(cells[weight_index].get_text(strip=True))
+            weight = normalize_weight(cells[weight_index].get_text(strip=True), weight_unit)
             if weight <= 0:
                 continue
             name = cells[name_index].get_text(strip=True) if name_index is not None else ""

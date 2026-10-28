@@ -15,7 +15,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Sequence
 
-from ..models import DirectQuote, Holding, HoldingsSnapshot, NavPoint, Quote
+from ..models import DirectQuote, Holding, HoldingsSnapshot, NavPoint, Quote, WeightUnit
+from ..utils.html import normalize_weight
 from ..utils.http import HttpClient
 
 
@@ -68,12 +69,33 @@ class ValuationSource(BaseDataSource):
 
 
 class HoldingsSource(BaseDataSource):
-    """持仓源：返回某只基金的最新前十大重仓股。"""
+    """持仓源：返回某只基金的最新前十大重仓股。
+
+    子类必须显式声明 `weight_unit`：权重单位是接口字段的固有属性，不能由数值
+    大小推断。反例是 ETF 联接基金 —— 它 95% 资产在目标 ETF 里，股票明细只剩
+    残余仓位（"0.52" 表示 0.52%），若用"大于 1 才除以 100"的启发式，会把
+    0.52% 当成 52%，coverage 合计冲到 253%，并被误标为 high 置信度。
+
+    新增数据源时：先查清接口字段的原始口径 → 在类属性里声明 → 解析时一律调用
+    `self._weight_to_decimal()`，不要在子类里自己写除以 100。
+    """
+
+    # 默认百分数：现有两个源（东财 JZBL、天天基金"占净值比例"）都是百分数口径。
+    # 子类按实际接口声明，声明错了比不声明更危险，因此新增源必须核对真实返回值。
+    weight_unit: WeightUnit = WeightUnit.PERCENT
 
     @abstractmethod
     def fetch_holdings(self, fund_code: str) -> HoldingsSnapshot:
         """抓取前十大重仓股。解析不到任何持仓时必须抛 DataSourceError。"""
         ...
+
+    def _weight_to_decimal(self, value: float | str | None) -> float:
+        """把本源返回的原始权重，按 `weight_unit` 声明换算成小数形式。
+
+        统一走这一个入口，好处是"口径"只在类属性上声明一次，解析代码不需要、
+        也不允许再关心除以 100 的问题。
+        """
+        return normalize_weight(value, self.weight_unit)
 
     @staticmethod
     def _require_holdings(fund_code: str, holdings: list[Holding], source: str) -> list[Holding]:

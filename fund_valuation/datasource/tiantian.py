@@ -15,7 +15,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Sequence
 
-from ..models import DirectQuote, HoldingsSnapshot, NavPoint
+from ..models import DirectQuote, HoldingsSnapshot, NavPoint, WeightUnit
 from ..utils.html import parse_holdings_table
 from ..utils.http import safe_float
 from ..utils.logger import get_logger
@@ -93,6 +93,9 @@ class TiantianHoldingsSource(HoldingsSource):
     name = "tiantian"
     ARCHIVES_URL = "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
     HEADERS = {"Referer": "https://fundf10.eastmoney.com/"}
+    # 档案接口的 "占净值比例" 列带 % 后缀，属百分数口径；
+    # 显式声明后由 parse_holdings_table 透传，不再按数值大小猜测。
+    weight_unit = WeightUnit.PERCENT
 
     def fetch_holdings(self, fund_code: str) -> HoldingsSnapshot:
         """取前十大重仓股 HTML 片段并解析。"""
@@ -114,8 +117,9 @@ class TiantianHoldingsSource(HoldingsSource):
         if not content:
             raise DataSourceError(self.name, f"{fund_code} 档案接口未返回持仓内容")
 
-        # 解析与权重口径归一都复用 utils.html，和东财/其它页面保持同一套逻辑。
-        holdings, report_date = parse_holdings_table(content)
+        # 解析与权重口径归一都复用 utils.html，和东财/其它页面保持同一套逻辑；
+        # weight_unit 透传下去，保证"单位"仍由本源声明而非解析器猜。
+        holdings, report_date = parse_holdings_table(content, self.weight_unit)
         holdings = self._require_holdings(fund_code, holdings, self.name)
         return HoldingsSnapshot(
             fund_code=fund_code,

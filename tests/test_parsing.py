@@ -1,9 +1,12 @@
-"""解析与工具函数测试：代码归一化、权重归一、F10 表格解析。"""
+"""解析与工具函数测试：代码归一化、权重口径、F10 表格解析。"""
 
 from __future__ import annotations
 
 import pytest
 
+from fund_valuation.datasource.eastmoney import EastmoneyHoldingsSource
+from fund_valuation.datasource.tiantian import TiantianHoldingsSource
+from fund_valuation.models import WeightUnit
 from fund_valuation.utils.html import normalize_weight, parse_holdings_table
 from fund_valuation.utils.http import normalize_code, safe_float, split_code
 from fund_valuation.utils.timeutil import parse_datetime, same_day
@@ -61,12 +64,26 @@ def test_safe_float_keeps_empty_vs_zero_distinction():
 
 
 @pytest.mark.parametrize(
-    ("raw", "expected"),
-    [("9.53%", 0.0953), (9.53, 0.0953), (0.0953, 0.0953), ("95.3", 0.953), ("", 0.0), ("-1", 0.0)],
+    ("raw", "unit", "expected"),
+    [
+        ("9.53%", WeightUnit.PERCENT, 0.0953),
+        (9.53, WeightUnit.PERCENT, 0.0953),
+        ("95.3", WeightUnit.PERCENT, 0.953),
+        # 回归用例：联接基金的残余持仓 "0.52" 是 0.52%，绝不能被当成 52%。
+        # 旧实现按 ">1 才除以 100" 推断，这里会得到 0.52，进而把 coverage 算成 253%。
+        ("0.52", WeightUnit.PERCENT, 0.0052),
+        (0.52, WeightUnit.PERCENT, 0.0052),
+        # 小数口径原样保留，不做任何推断（9.53 就是 9.53，不会被"修正"成 0.0953）。
+        (0.0953, WeightUnit.DECIMAL, 0.0953),
+        (9.53, WeightUnit.DECIMAL, 9.53),
+        ("", WeightUnit.PERCENT, 0.0),
+        ("-1", WeightUnit.PERCENT, 0.0),
+        (None, WeightUnit.DECIMAL, 0.0),
+    ],
 )
-def test_normalize_weight(raw, expected):
-    """>1 视为百分数除以 100，<=1 视为已是小数；空值与负值一律归 0。"""
-    assert normalize_weight(raw) == pytest.approx(expected)
+def test_normalize_weight_respects_declared_unit(raw, unit, expected):
+    """单位由数据源声明，不靠数值大小推断；空值与负值一律归 0。"""
+    assert normalize_weight(raw, unit) == pytest.approx(expected)
 
 
 def test_parse_holdings_table():
@@ -80,10 +97,31 @@ def test_parse_holdings_table():
     assert holdings[0].weight == pytest.approx(0.0953)
 
 
+def test_parse_holdings_table_decimal_unit_keeps_values():
+    """声明为小数口径时，表格里的 0.0953 原样保留，不再除以 100。"""
+    html = (
+        "<table><tr><th>股票代码</th><th>股票名称</th><th>占净值比例</th></tr>"
+        "<tr><td>600519</td><td>贵州茅台</td><td>0.0953</td></tr></table>"
+    )
+    holdings, _ = parse_holdings_table(html, WeightUnit.DECIMAL)
+    assert holdings[0].weight == pytest.approx(0.0953, rel=1e-6)
+
+
 def test_parse_holdings_table_without_weights_returns_empty():
     """缺少"占净值比例"列的表不是持仓明细表，应返回空列表而不是乱解析。"""
     html = "<table><tr><th>股票代码</th><th>股票名称</th></tr><tr><td>600519</td><td>贵州茅台</td></tr></table>"
     assert parse_holdings_table(html)[0] == []
+
+
+@pytest.mark.parametrize("source_cls", [EastmoneyHoldingsSource, TiantianHoldingsSource])
+def test_holdings_source_declares_weight_unit(source_cls):
+    """每个持仓源都必须自己声明口径。
+
+    断言"类自身定义"而非"能取到值"：靠基类默认值继承会掩盖"新源忘了核对口径"，
+    而口径错了会静默产出 100 倍偏差的权重。
+    """
+    assert "weight_unit" in vars(source_cls)
+    assert isinstance(source_cls.weight_unit, WeightUnit)
 
 
 def test_parse_datetime_formats():

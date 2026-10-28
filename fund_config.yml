@@ -50,6 +50,48 @@ funds:
     max_holdings_pct: 0.50
     fallback_etf: "sh518880"
 
+  # 创业板人工智能 ETF 联接：接口直接给 GSZ，走 direct；
+  # 该基金 95% 资产投资于目标 ETF（sz159381），股票明细仅剩 2.5% 残余仓位，
+  # 因此 synthetic 路径对它没有意义，仅作为接口空值时的最后兜底。
+  - code: "025506"
+    name: "华夏创业板人工智能ETF发起式联接C"
+    mode: "direct"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.80
+    fallback_etf: "sz159381"
+
+  # ---- 指数 / LOF：持仓明细可得，接口也给 GSZ，双向都有数据 ----
+  - code: "013083"
+    name: "中信保诚中证信息安全指数(LOF)C"
+    mode: "direct"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.45        # 实测前十大合计 46.21%，按其历史水平校准
+    fallback_etf: null
+
+  - code: "021964"
+    name: "天弘储能电池指数C"
+    mode: "auto"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.55        # 实测前十大合计 56.32%
+    fallback_etf: null
+
+  # ---- ETF 联接：股票明细不可用，必须靠代理 ETF 兜底 ----
+  - code: "012725"
+    name: "国泰中证畜牧养殖ETF联接C"
+    mode: "direct"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.80
+    # 两个持仓源均返回无数据（联接基金常态），synthetic 必然失败 → 由代理 ETF 接管
+    fallback_etf: "sz159865"      # 目标 ETF：养殖ETF国泰
+
+  - code: "007531"
+    name: "华宝券商ETF联接C"
+    mode: "direct"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.80
+    # 持仓表只有残余直接持股（合计 1.16%），不能代表基金仓位 → 优先用代理 ETF
+    fallback_etf: "sh512000"      # 目标 ETF：券商ETF华宝
+
 runtime:
   interval_seconds: 60          # 盘中轮询间隔（秒）
   trade_time_only: true         # 非交易时段跳过（手动 --once 不受限）
