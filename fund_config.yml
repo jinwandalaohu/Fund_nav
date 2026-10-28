@@ -45,10 +45,10 @@ funds:
   # ETF 联接基金：无持仓明细时用代理 ETF 行情兜底
   - code: "002611"
     name: "博时黄金ETF联接C"
-    mode: "synthetic"
+    mode: "direct"
     holdings_source: "tiantian"
     max_holdings_pct: 0.50
-    fallback_etf: "sh518880"
+    fallback_etf: "159937.SZ"
 
   # 创业板人工智能 ETF 联接：接口直接给 GSZ，走 direct；
   # 该基金 95% 资产投资于目标 ETF（sz159381），股票明细仅剩 2.5% 残余仓位，
@@ -65,14 +65,14 @@ funds:
     name: "中信保诚中证信息安全指数(LOF)C"
     mode: "direct"
     holdings_source: "eastmoney"
-    max_holdings_pct: 0.45        # 实测前十大合计 46.21%，按其历史水平校准
+    max_holdings_pct: 0.45 # 实测前十大合计 46.21%，按其历史水平校准
     fallback_etf: null
 
   - code: "021964"
     name: "天弘储能电池指数C"
     mode: "auto"
     holdings_source: "eastmoney"
-    max_holdings_pct: 0.55        # 实测前十大合计 56.32%
+    max_holdings_pct: 0.55 # 实测前十大合计 56.32%
     fallback_etf: null
 
   # ---- ETF 联接：股票明细不可用，必须靠代理 ETF 兜底 ----
@@ -82,7 +82,7 @@ funds:
     holdings_source: "eastmoney"
     max_holdings_pct: 0.80
     # 两个持仓源均返回无数据（联接基金常态），synthetic 必然失败 → 由代理 ETF 接管
-    fallback_etf: "sz159865"      # 目标 ETF：养殖ETF国泰
+    fallback_etf: "sz159865" # 目标 ETF：养殖ETF国泰
 
   - code: "007531"
     name: "华宝券商ETF联接C"
@@ -90,17 +90,17 @@ funds:
     holdings_source: "eastmoney"
     max_holdings_pct: 0.80
     # 持仓表只有残余直接持股（合计 1.16%），不能代表基金仓位 → 优先用代理 ETF
-    fallback_etf: "sh512000"      # 目标 ETF：券商ETF华宝
+    fallback_etf: "sh512000" # 目标 ETF：券商ETF华宝
 
 runtime:
-  interval_seconds: 60          # 盘中轮询间隔（秒）
-  trade_time_only: true         # 非交易时段跳过（手动 --once 不受限）
+  interval_seconds: 60 # 盘中轮询间隔（秒）
+  trade_time_only: true # 非交易时段跳过（手动 --once 不受限）
   db_path: "./fund_valuation.db"
-  request_timeout: 8            # 单次 HTTP 超时（秒）
-  batch_size: 50                # 批量估值接口单批上限（1..50）
+  request_timeout: 8 # 单次 HTTP 超时（秒）
+  batch_size: 50 # 批量估值接口单批上限（1..50）
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
   log_level: "INFO"
-  max_workers: 4                # 合成路径并发线程数（1..32）
-  validate_gztime: true         # 校验 GZTIME 是否为当日，防止隔夜旧值入库
-  retry_times: 2                # 网络失败重试次数（不含首次）
-  holidays_file: null           # 可选：自定义休市日文件，每行一个 YYYY-MM-DD
+  max_workers: 4 # 合成路径并发线程数（1..32）
+  validate_gztime: true # 校验 GZTIME 是否为当日，防止隔夜旧值入库
+  retry_times: 2 # 网络失败重试次数（不含首次）
+  holidays_file: null # 可选：自定义休市日文件，每行一个 YYYY-MM-DD
