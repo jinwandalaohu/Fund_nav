@@ -26,3 +26,4 @@ env/
 # Test / lint
 .pytest_cache/
 .ruff_cache/
+.trae/rules/git-commit-message.md
