@@ -1,0 +1,64 @@
+# 基金实时估值系统 — 配置示例
+# 字段含义见 README.md「配置说明」。修改后需重启进程生效。
+
+funds:
+  # 主动权益基金：接口无实时估值 → 自动走持仓加权合成
+  # 注：max_holdings_pct 是"期望的前十大覆盖率"阈值。主动基金前十大通常只占 40%–60%，
+  # 设为 0.80 会让 confidence 长期为 low；若希望中等覆盖也能标 medium，可下调到 0.50。
+  - code: "016186"
+    name: "广发电力ETF联接C"
+    mode: "direct"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.80
+    fallback_etf: null
+
+  - code: "012769"
+    name: "华夏中证动漫游戏ETF发起式联接C"
+    mode: "direct"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.80
+    fallback_etf: null
+
+  - code: "005827"
+    name: "易方达蓝筹精选混合"
+    mode: "auto"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.80
+    fallback_etf: null
+
+  # LOF / 指数基金：通常接口直接给 GSZ，走 direct 路径
+  - code: "161725"
+    name: "招商中证白酒指数(LOF)A"
+    mode: "auto"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.90
+    fallback_etf: null
+
+  # 场内 ETF：估值接口直接返回实时估值
+  - code: "510300"
+    name: "华泰柏瑞沪深300ETF"
+    mode: "auto"
+    holdings_source: "eastmoney"
+    max_holdings_pct: 0.95
+    fallback_etf: null
+
+  # ETF 联接基金：无持仓明细时用代理 ETF 行情兜底
+  - code: "002611"
+    name: "博时黄金ETF联接C"
+    mode: "synthetic"
+    holdings_source: "tiantian"
+    max_holdings_pct: 0.50
+    fallback_etf: "sh518880"
+
+runtime:
+  interval_seconds: 60          # 盘中轮询间隔（秒）
+  trade_time_only: true         # 非交易时段跳过（手动 --once 不受限）
+  db_path: "./fund_valuation.db"
+  request_timeout: 8            # 单次 HTTP 超时（秒）
+  batch_size: 50                # 批量估值接口单批上限（1..50）
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  log_level: "INFO"
+  max_workers: 4                # 合成路径并发线程数（1..32）
+  validate_gztime: true         # 校验 GZTIME 是否为当日，防止隔夜旧值入库
+  retry_times: 2                # 网络失败重试次数（不含首次）
+  holidays_file: null           # 可选：自定义休市日文件，每行一个 YYYY-MM-DD

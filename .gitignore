@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+.agent/
+
+# OS
+
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+venv/
+env/
+.venv/
+
+# Database（估值库属于运行产物，不入版本库）
+*.db
+*.db-wal
+*.db-shm
+
+# Test / lint
+.pytest_cache/
+.ruff_cache/

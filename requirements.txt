@@ -1,0 +1,5 @@
+# 运行时依赖（无 Web 框架、无 ORM）
+requests>=2.31
+PyYAML>=6.0
+beautifulsoup4>=4.12
+lxml>=5.0
