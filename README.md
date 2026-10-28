@@ -315,7 +315,8 @@ sqlite3 fund_valuation.db "DELETE FROM valuation WHERE ts < date('now','-90 day'
    `actions/upload-artifact`（`path: fund_valuation.db`），跑完即可从 run 页面下载该文件。
 6. **非交易时段也会写库**：`--once` 按设计忽略 `trade_time_only`，因此夜间/周末每轮仍会落一行
    （多为 `not_supported` 或与上一轮同值）。需要严格只在盘中采集，收窄 cron 即可。
-
+---
+[![fetch-data](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml/badge.svg?branch=main&event=schedule)](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml)
 ---
 
 ## 9. 常见问题
