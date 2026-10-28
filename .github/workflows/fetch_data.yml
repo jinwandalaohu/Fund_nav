@@ -1,0 +1,192 @@
+# 基金实时估值系统 · GitHub Actions 定时采集
+#
+# 职责：每 5 分钟跑一次 `--once`（单轮估值后退出，不常驻），把结果写进 SQLite，
+#       再用 actions/cache 把数据库文件"接力"给下一轮 —— 这就是本工作流唯一的持久化手段。
+#
+# ── 三个必须知道的事实（都不是本文件能绕过的限制）──────────────────────────
+#
+# 1. cron 最小粒度就是 5 分钟，且**不保证准时**。
+#    GitHub 的调度队列在整点/整分最拥堵，实测延迟 5～20 分钟很常见，偶尔更久。
+#    本系统写入的是"抓取时刻的估值"，延迟只会让采样点变稀，不会写错数据。
+#
+# 2. 定时任务只认**默认分支**上的 workflow 文件，且仓库连续 60 天无提交会被自动停用。
+#    所以这个文件必须合并进 main/master，否则 schedule 永远不会触发（手动 dispatch 可以）。
+#
+# 3. 免费额度按"每次运行满 1 分钟"计费：288 次/天 × 30 天 ≈ 8640 分钟/月。
+#    → 公开仓库：Actions 分钟数不限，可以放心跑。
+#    → 私有仓库：免费额度 2000 分钟/月，大约 7 天就会耗尽，只适合把 cron 改稀
+#      （例如 workdays 的交易时段 `*/5 1-3,5-7 * * 1-5`，或干脆每 30 分钟一次）。
+#
+# ── 数据库如何跨运行存活 ────────────────────────────────────────────────
+#
+# actions/cache 是"不可变 + 按 key 精确命中"，所以使用滚动 key：
+#   key:          fund-db-<run_id>   → 与本轮 run_id 绑定，永远不命中（逼它必存）
+#   restore-keys: fund-db-           → 前缀匹配，取"最近创建的那一份"作为本轮的起点
+# 于是每轮都是：还原上一轮的库 → 追加本轮数据 → 存成一份新缓存。
+# 旧缓存由 GitHub 按 10 GB 总量 LRU 回收，不需要（也无法）手工清理。
+#
+# 该方案的边界：缓存能在运行结束前被保存（post 步骤），但 job 若被"取消"而非
+# "失败"，post 步骤不执行，这一轮的增量就丢了。下一轮会从更早的库继续，不会写坏。
+
+name: fetch-data
+
+on:
+  schedule:
+    # 每 5 分钟（UTC 表达式，与宿主时区无关；容器时区由下方 env.TZ 修正）
+    - cron: "*/5 * * * *"
+  # 手动触发：用于首次预热缓存、改完代码后立即验证，不必等下一个 5 分钟
+  workflow_dispatch:
+
+# 只需要读代码；数据库走 cache，不碰仓库任何写权限
+permissions:
+  contents: read
+
+# 串行化：上一轮没跑完时，新的一轮排队而不是并跑。
+# 两个进程同时写同一个 SQLite（WAL 只支持"多读一写"）会互相等锁甚至写坏缓存，
+# cancel-in-progress: false 保证正在跑的那轮不被中途掐断（掐断会丢 WAL 里的增量）。
+concurrency:
+  group: fetch-data
+  cancel-in-progress: false
+
+env:
+  # 关键：代码里全部用 datetime.now() 这类"本地朴素时间"（valuation.ts、
+  # same_day 的隔夜校验、交易日历都依赖它）。runner 默认 UTC，与北京时间差 8 小时，
+  # 会导致 ts 写入 UTC 时刻、且凌晨时段与 GZTIME 的日期比对错位。
+  TZ: Asia/Shanghai
+  # 让 print/logging 立即冲刷，否则 GH 日志要等进程结束才一次性出现，排查困难
+  PYTHONUNBUFFERED: "1"
+  CONFIG_FILE: fund_config.yml
+  # 必须与 fund_config.yml 里的 runtime.db_path 保持一致（相对仓库根目录）
+  DB_FILE: fund_valuation.db
+
+jobs:
+  fetch:
+    name: 单轮采集（--once）
+    runs-on: ubuntu-latest
+    # 单轮正常 10～20 秒；给 5 分钟上限，卡住时让 job 失败（而非挂到下一轮开始）
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 准备 uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          # 缓存 uv 的下载目录：requirements.txt 不变时，安装依赖约 2 秒
+          enable-cache: true
+          cache-dependency-glob: requirements.txt
+
+      # 必须在"执行估值"之前还原，让本轮在上一轮的数据之上继续累加
+      - name: 还原数据库缓存
+        id: cache-db
+        uses: actions/cache@v4
+        with:
+          # 三个文件一起缓存：正常退出时 db.close() 会合并 WAL，只剩 .db；
+          # 若上一轮异常退出，-wal 里才是最新增量，漏掉它会丢数据。
+          path: |
+            fund_valuation.db
+            fund_valuation.db-wal
+            fund_valuation.db-shm
+          key: fund-db-${{ github.run_id }}
+          restore-keys: |
+            fund-db-
+
+      - name: 安装依赖
+        run: |
+          uv venv .venv --python 3.13
+          uv pip install --python .venv/bin/python -r requirements.txt
+          # 立刻验证关键包可导入：依赖装错解释器时在这里失败，比跑到一半才报错好定位
+          .venv/bin/python -c "import requests, yaml, bs4, lxml; print('依赖就绪')"
+
+      - name: 执行一次估值
+        # 用 --once 而非常驻：GitHub Actions 的 job 生命周期本身就是一个调度器，
+        # 进程跑完即退出，不做轮询。--once 按设计忽略 trade_time_only，
+        # 因此非交易时段也会落库（状态多为 not_supported / 与上一轮同值），
+        # 需要"只在盘中跑"就把上面的 cron 收窄到 UTC 1-3,5-7 点。
+        run: .venv/bin/python -m fund_valuation.main --config "$CONFIG_FILE" --once
+
+      # 即使采集失败也要执行：把已写入的内容落盘并写进缓存，避免整轮白跑
+      - name: 落盘检查 + 生成运行摘要
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          import sqlite3
+          from pathlib import Path
+
+          db = Path(os.environ["DB_FILE"])
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          out = []
+
+          if not db.exists():
+              out.append("> 本轮未生成数据库文件，没有任何数据落库。")
+          else:
+              # WAL 合并回主库，并清掉 -wal/-shm。这样缓存里的 .db 是自包含的，
+              # 下一轮即使只还原到一个文件也能拿到全部数据。
+              conn = sqlite3.connect(db)
+              conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+              conn.close()
+              for suffix in ("-wal", "-shm"):
+                  leftover = Path(f"{db}{suffix}")
+                  if leftover.exists():
+                      leftover.unlink()
+
+              conn = sqlite3.connect(db)
+              conn.row_factory = sqlite3.Row
+              # 每只基金最新的一条，即本轮写入结果
+              rows = conn.execute(
+                  """
+                  SELECT v.ts, v.fund_code, v.estimated_change_pct AS chg,
+                         v.estimated_nav AS nav, v.coverage_pct AS cov,
+                         v.confidence AS conf, v.source AS src, v.status AS st
+                  FROM valuation v
+                  JOIN (SELECT fund_code, MAX(ts) AS mts FROM valuation GROUP BY fund_code) m
+                    ON m.fund_code = v.fund_code AND m.mts = v.ts
+                  ORDER BY v.fund_code
+                  """
+              ).fetchall()
+              total = conn.execute("SELECT COUNT(*) FROM valuation").fetchone()[0]
+              snapshots = conn.execute("SELECT COUNT(*) FROM holdings_snapshot").fetchone()[0]
+              conn.close()
+
+              size = db.stat().st_size / 1024
+              size_text = f"{size / 1024:.2f} MB" if size >= 1024 else f"{size:.1f} KB"
+              out.append(f"**估值行数** {total} ｜ **持仓行数** {snapshots} ｜ **库体积** {size_text}")
+              out.append("")
+              out.append("| 时间 | 基金 | 涨跌% | 估算净值 | 覆盖率 | 置信度 | source | 状态 |")
+              out.append("|---|---|---|---|---|---|---|---|")
+              for r in rows:
+                  out.append(
+                      "| {} | {} | {} | {} | {} | {} | {} | {} |".format(
+                          r["ts"],
+                          r["fund_code"],
+                          f"{r['chg']:+.2f}" if r["chg"] is not None else "--",
+                          f"{r['nav']:.4f}" if r["nav"] is not None else "--",
+                          f"{r['cov']:.1%}" if r["cov"] is not None else "--",
+                          r["conf"] or "--",
+                          r["src"] or "--",
+                          r["st"],
+                      )
+                  )
+
+          text = "\n".join(out)
+          print(text)
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as fp:
+                  fp.write("## 本轮采集结果\n\n" + text + "\n")
+          PY
+
+      # 缓存的实际保存在 job 结束后的 post 步骤自动完成，此处只是把结果暴露在日志里，
+      # 便于确认"这一轮是从哪份缓存接上的"。用手写 cache-matched-key 而非 cache-hit：
+      # 滚动 key 永远精确命中不了，cache-hit 恒为 false，看不出真实情况。
+      - name: 缓存状态
+        if: always()
+        run: |
+          echo "接续自: ${{ steps.cache-db.outputs.cache-matched-key || '无（首轮，将新建库）' }}"
+          echo "本轮新缓存 key: fund-db-${{ github.run_id }}"

@@ -99,6 +99,7 @@ fund_valuation/
 | `DATABASE.md` | **数据库逐字段说明**：取值、写入时机、NULL 语义、常用 SQL |
 | `requirements.txt` / `requirements-dev.txt` | 运行依赖 / 含测试与 lint 的开发依赖 |
 | `pytest.ini` | 测试配置 |
+| `.github/workflows/fetch_data.yml` | GitHub Actions 定时采集（每 5 分钟 `--once`，见 8.1） |
 
 ---
 
@@ -282,6 +283,39 @@ uv run python -m fund_valuation.main --config /opt/fund/fund_config.yml
 sqlite3 fund_valuation.db "DELETE FROM valuation WHERE ts < date('now','-90 day'); VACUUM;"
 ```
 
+### 8.1 GitHub Actions 定时采集
+
+`.github/workflows/fetch_data.yml` 把上面的 cron 方案搬到云端：**每 5 分钟跑一次 `--once`，
+数据库文件通过 `actions/cache` 在运行之间接力**，无需自备服务器。
+
+| 环节 | 做法 |
+|---|---|
+| 触发 | `cron: "*/5 * * * *"` + 手动 `workflow_dispatch` |
+| 执行 | `.venv/bin/python -m fund_valuation.main --config fund_config.yml --once` |
+| 持久化 | `actions/cache`，路径为 `fund_valuation.db`（含 `-wal` / `-shm`） |
+| 串行 | `concurrency.cancel-in-progress: false`，上一轮没跑完时排队，避免两个进程同时写库 |
+| 可观测 | 每轮把「最新一条/基金 + 行数 + 库体积」写进 Actions 的 Step Summary |
+
+缓存用**滚动 key** 实现"库接力"：`key: fund-db-<run_id>` 保证每轮都是新缓存（否则命中后不再保存），
+`restore-keys: fund-db-` 前缀匹配到最近一份作为起点。旧缓存由 GitHub 按 10 GB 总量 LRU 回收。
+
+首次启用与注意事项：
+
+1. **必须合并进默认分支**，`schedule` 只读取默认分支上的 workflow 文件；推送后到 Actions
+   页手动 Run 一次，确认首轮能建库、第二轮能命中缓存。
+2. **时区已固定为 `Asia/Shanghai`**（`env.TZ`）。代码内全部使用 `datetime.now()` 的本地朴素时间，
+   runner 默认 UTC 会让 `valuation.ts` 差 8 小时、并让 `validate_gztime` 在凌晨时段误判隔夜。
+   改动该值等于改动整个库的时间口径。
+3. **计费**：每轮按 1 分钟计，288 轮/天 ≈ 8640 分钟/月。公开仓库不限量；私有仓库免费额度 2000
+   分钟/月，约 7 天耗尽 —— 私有仓库请把 cron 收窄到交易时段，如
+   `*/5 1-3,5-7 * * 1-5`（UTC，对应北京时间 09:00–11:55、13:00–15:55）。
+4. **cron 不保证准时**：GitHub 调度队列拥堵时延迟 5–20 分钟常见，采样点会变稀但不影响正确性；
+   仓库连续 60 天无提交，定时任务会被自动停用。
+5. **取回数据**：缓存只能被 workflow 还原、不能直接下载。需要导出时在末尾临时加一步
+   `actions/upload-artifact`（`path: fund_valuation.db`），跑完即可从 run 页面下载该文件。
+6. **非交易时段也会写库**：`--once` 按设计忽略 `trade_time_only`，因此夜间/周末每轮仍会落一行
+   （多为 `not_supported` 或与上一轮同值）。需要严格只在盘中采集，收窄 cron 即可。
+
 ---
 
 ## 9. 常见问题
@@ -314,7 +348,7 @@ sqlite3 fund_valuation.db "DELETE FROM valuation WHERE ts < date('now','-90 day'
 
 ```bash
 uv pip install -r requirements-dev.txt
-uv run python -m pytest          # 68 项，全部离线（无网络依赖）
+uv run python -m pytest          # 75 项，全部离线（无网络依赖）
 uv run python -m ruff check fund_valuation tests --select E,F,W --ignore E501
 ```
 
