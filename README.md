@@ -1,5 +1,10 @@
 # 基金实时估值系统（纯后端 · 数据只写 SQLite）
 
+---
+
+[![fetch-data](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml/badge.svg)](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml)
+[![fetch-data](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml/badge.svg?branch=main&event=schedule)](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml)
+
 [![fetch-data](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml/badge.svg)](https://github.com/jinwandalaohu/Fund_nav/actions/workflows/fetch_data.yml)
 ![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![SQLite](https://img.shields.io/badge/storage-SQLite-003B57?logo=sqlite&logoColor=white)
@@ -16,12 +21,12 @@
 
 ### 它做什么 / 不做什么
 
-| 做 | 不做 |
-|---|---|
-| 定时抓取并归档每只基金的盘中估值 | 不提供 Web 界面、HTTP API 或图表 |
-| 接口没有估值时，用季报前十大权重 × 个股涨跌合成 | 不预测净值，不给买入/卖出建议 |
+| 做                                                                    | 不做                                   |
+| --------------------------------------------------------------------- | -------------------------------------- |
+| 定时抓取并归档每只基金的盘中估值                                      | 不提供 Web 界面、HTTP API 或图表       |
+| 接口没有估值时，用季报前十大权重 × 个股涨跌合成                       | 不预测净值，不给买入/卖出建议          |
 | 记录 `source` / `confidence` / `coverage_pct`，说明数字的来源与可信度 | 不保证实时性（取决于第三方接口可用性） |
-| 单只基金失败只落一条 `failed`，不拖累同批其它基金 | 不做回测、组合管理，也不接券商下单 |
+| 单只基金失败只落一条 `failed`，不拖累同批其它基金                     | 不做回测、组合管理，也不接券商下单     |
 
 ### 一轮估值是怎么算出来的
 
@@ -80,13 +85,13 @@ python -m fund_valuation.main --config fund_config.yml --once
 
 命令行参数：
 
-| 参数 | 说明 |
-|---|---|
-| `--config PATH` | YAML 配置路径，默认 `fund_config.yml` |
-| `--once` | 只执行一轮后退出；**忽略** `trade_time_only` |
-| `--iterations N` | 常驻模式下最多轮询 N 轮（调试用） |
-| `--force` | 非交易时段也执行 |
-| `--show` | 结束时把最近记录打印到 stdout（仅排查用，不写文件） |
+| 参数             | 说明                                                |
+| ---------------- | --------------------------------------------------- |
+| `--config PATH`  | YAML 配置路径，默认 `fund_config.yml`               |
+| `--once`         | 只执行一轮后退出；**忽略** `trade_time_only`        |
+| `--iterations N` | 常驻模式下最多轮询 N 轮（调试用）                   |
+| `--force`        | 非交易时段也执行                                    |
+| `--show`         | 结束时把最近记录打印到 stdout（仅排查用，不写文件） |
 
 数据库文件由 `runtime.db_path` 决定，首次运行自动建表，无需手工执行 SQL。
 
@@ -131,28 +136,27 @@ fund_valuation/
 
 按调用链阅读的顺序：`main` → `scheduler` → `valuation/engine` → `datasource/tiantian|eastmoney|tencent` → `valuation/synthetic`。
 
-
 根目录文件：
 
-| 文件 | 说明 |
-|---|---|
-| `fund_config.yml` | 待估值基金列表 + 运行时参数 |
-| `README.md` | 本文档：安装、配置、算法、运维 |
-| `PIPELINE.md` | **数据获取与计算逻辑详解**：调用链、请求参数、解析规则、降级矩阵 |
-| `DATABASE.md` | **数据库逐字段说明**：取值、写入时机、NULL 语义、常用 SQL |
-| `requirements.txt` / `requirements-dev.txt` | 运行依赖 / 含测试与 lint 的开发依赖 |
-| `pytest.ini` | 测试配置 |
-| `.github/workflows/fetch_data.yml` | GitHub Actions 定时采集（每 5 分钟 `--once`，见 8.1） |
+| 文件                                        | 说明                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `fund_config.yml`                           | 待估值基金列表 + 运行时参数                                      |
+| `README.md`                                 | 本文档：安装、配置、算法、运维                                   |
+| `PIPELINE.md`                               | **数据获取与计算逻辑详解**：调用链、请求参数、解析规则、降级矩阵 |
+| `DATABASE.md`                               | **数据库逐字段说明**：取值、写入时机、NULL 语义、常用 SQL        |
+| `requirements.txt` / `requirements-dev.txt` | 运行依赖 / 含测试与 lint 的开发依赖                              |
+| `pytest.ini`                                | 测试配置                                                         |
+| `.github/workflows/fetch_data.yml`          | GitHub Actions 定时采集（每 5 分钟 `--once`，见 8.1）            |
 
 ---
 
 ## 3. 双轨估值策略
 
-| 路径 | 适用基金 | 数据 | `source` |
-|---|---|---|---|
-| **direct** | LOF、场内 ETF、部分场外指数基金 | 天天基金批量估值接口的 `GSZ` / `GSZZL` | `api` |
-| **synthetic** | 主动权益、无直接估值的场外指数基金 | 季报前十大权重 × 个股实时涨跌，归一化 | `synthetic` |
-| **fallback** | 无持仓且配置了 `fallback_etf` 的指数/联接基金 | 代理 ETF 实时涨跌 × 95% 仓位假设 | `fallback` |
+| 路径          | 适用基金                                      | 数据                                   | `source`    |
+| ------------- | --------------------------------------------- | -------------------------------------- | ----------- |
+| **direct**    | LOF、场内 ETF、部分场外指数基金               | 天天基金批量估值接口的 `GSZ` / `GSZZL` | `api`       |
+| **synthetic** | 主动权益、无直接估值的场外指数基金            | 季报前十大权重 × 个股实时涨跌，归一化  | `synthetic` |
+| **fallback**  | 无持仓且配置了 `fallback_etf` 的指数/联接基金 | 代理 ETF 实时涨跌 × 95% 仓位假设       | `fallback`  |
 
 `mode` 决定路径：
 
@@ -164,12 +168,12 @@ fund_valuation/
 
 ## 4. 数据源与实测状态（2026-10 校验）
 
-| 环节 | 主源 | 备源 | 备注 |
-|---|---|---|---|
-| 基金估值 | 天天基金 `FundValuationLast`（批量 ≤50/次） | 新浪 `getEstimateNetworthPic` | 响应外层为小写 `data`，已兼容 `Datas/data/Data` |
-| 基金持仓 | 东财移动端 `FundMNInverstPosition` | 天天基金 `FundArchivesDatas`（HTML 片段） | 见下方失效说明 |
-| 个股行情 | 腾讯 `qt.gtimg.cn`（A股/港股/美股/ETF） | 新浪 `hq.sinajs.cn`（仅 A 股/ETF） | 新浪需 GBK + Referer |
-| 基准净值 | 天天基金 `pingzhongdata` | `f10/lsjz` | 两者都在 `TiantianNavSource` 内部串行尝试 |
+| 环节     | 主源                                        | 备源                                      | 备注                                            |
+| -------- | ------------------------------------------- | ----------------------------------------- | ----------------------------------------------- |
+| 基金估值 | 天天基金 `FundValuationLast`（批量 ≤50/次） | 新浪 `getEstimateNetworthPic`             | 响应外层为小写 `data`，已兼容 `Datas/data/Data` |
+| 基金持仓 | 东财移动端 `FundMNInverstPosition`          | 天天基金 `FundArchivesDatas`（HTML 片段） | 见下方失效说明                                  |
+| 个股行情 | 腾讯 `qt.gtimg.cn`（A股/港股/美股/ETF）     | 新浪 `hq.sinajs.cn`（仅 A 股/ETF）        | 新浪需 GBK + Referer                            |
+| 基准净值 | 天天基金 `pingzhongdata`                    | `f10/lsjz`                                | 两者都在 `TiantianNavSource` 内部串行尝试       |
 
 已失效或受限的端点（不要再用）：
 
@@ -205,12 +209,12 @@ coverage_pct        = total_weight
 
 置信度（`classify_confidence`）：
 
-| 条件 | confidence |
-|---|---|
-| `coverage >= max_holdings_pct` | `high` |
-| `coverage >= 0.75 × max_holdings_pct` | `medium` |
-| 其余，或有效持仓数为 0 | `low` |
-| `source=fallback`（代理 ETF） | 固定 `low` |
+| 条件                                  | confidence |
+| ------------------------------------- | ---------- |
+| `coverage >= max_holdings_pct`        | `high`     |
+| `coverage >= 0.75 × max_holdings_pct` | `medium`   |
+| 其余，或有效持仓数为 0                | `low`      |
+| `source=fallback`（代理 ETF）         | 固定 `low` |
 
 > 提醒：`max_holdings_pct` 是"期望覆盖率阈值"。主动基金前十大常只占 40%–60%，
 > 若配成 0.80，绝大多数主动基金将长期为 `low`；希望中等覆盖也标 `medium` 时把它下调到 0.5 左右。
@@ -221,30 +225,30 @@ coverage_pct        = total_weight
 
 `funds[]`：
 
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `code` | 是 | 6 位基金代码 |
-| `name` | 否 | 便于日志排查；也会写回 `funds.fund_name` |
-| `mode` | 否 | `auto` / `direct` / `synthetic`，默认 `auto`（非法值直接报错） |
-| `holdings_source` | 否 | `eastmoney` / `tiantian`，默认 `eastmoney`；另一个自动作为备份 |
-| `max_holdings_pct` | 否 | (0,1] 小数，默认 0.80，用于置信度分档 |
-| `fallback_etf` | 否 | 代理 ETF 代码（如 `sh518880`），无持仓时使用；无则填 `null` |
+| 字段               | 必填 | 说明                                                           |
+| ------------------ | ---- | -------------------------------------------------------------- |
+| `code`             | 是   | 6 位基金代码                                                   |
+| `name`             | 否   | 便于日志排查；也会写回 `funds.fund_name`                       |
+| `mode`             | 否   | `auto` / `direct` / `synthetic`，默认 `auto`（非法值直接报错） |
+| `holdings_source`  | 否   | `eastmoney` / `tiantian`，默认 `eastmoney`；另一个自动作为备份 |
+| `max_holdings_pct` | 否   | (0,1] 小数，默认 0.80，用于置信度分档                          |
+| `fallback_etf`     | 否   | 代理 ETF 代码（如 `sh518880`），无持仓时使用；无则填 `null`    |
 
 `runtime`：
 
-| 字段 | 默认 | 说明 |
-|---|---|---|
-| `interval_seconds` | 60 | 轮询间隔 |
-| `trade_time_only` | true | 非交易时段跳过（`--once` 不受限） |
-| `db_path` | ./fund_valuation.db | SQLite 路径 |
-| `request_timeout` | 8 | 单次 HTTP 超时（秒） |
-| `batch_size` | 50 | 批量估值单批上限，限制 1..50 |
-| `user_agent` | 浏览器 UA | 请求东财/新浪/天天基金使用 |
-| `log_level` | INFO | DEBUG/INFO/WARNING/ERROR/CRITICAL |
-| `max_workers` | 4 | 合成路径并发线程数，1..32 |
-| `validate_gztime` | true | 校验 `GZTIME` 是否为当日，防止隔夜旧值入库 |
-| `retry_times` | 2 | 网络失败重试次数（仅对超时/连接错误/5xx 重试） |
-| `holidays_file` | null | 自定义休市日文件，每行一个 `YYYY-MM-DD` |
+| 字段               | 默认                | 说明                                           |
+| ------------------ | ------------------- | ---------------------------------------------- |
+| `interval_seconds` | 60                  | 轮询间隔                                       |
+| `trade_time_only`  | true                | 非交易时段跳过（`--once` 不受限）              |
+| `db_path`          | ./fund_valuation.db | SQLite 路径                                    |
+| `request_timeout`  | 8                   | 单次 HTTP 超时（秒）                           |
+| `batch_size`       | 50                  | 批量估值单批上限，限制 1..50                   |
+| `user_agent`       | 浏览器 UA           | 请求东财/新浪/天天基金使用                     |
+| `log_level`        | INFO                | DEBUG/INFO/WARNING/ERROR/CRITICAL              |
+| `max_workers`      | 4                   | 合成路径并发线程数，1..32                      |
+| `validate_gztime`  | true                | 校验 `GZTIME` 是否为当日，防止隔夜旧值入库     |
+| `retry_times`      | 2                   | 网络失败重试次数（仅对超时/连接错误/5xx 重试） |
+| `holidays_file`    | null                | 自定义休市日文件，每行一个 `YYYY-MM-DD`        |
 
 校验策略是"宁可启动失败也不静默降级"：未知字段、枚举拼错、阈值越界都会抛 `ConfigError`
 并指出 `funds[1].mode` 这类具体位置，进程以退出码 2 结束。
@@ -272,11 +276,11 @@ valuation(id, fund_code, ts, estimated_nav, estimated_change_pct, base_nav,
 
 `status` 语义：
 
-| 值 | 含义 |
-|---|---|
-| `available` | 成功算出估值 |
-| `not_supported` | 接口明确无实时估值（主动基金常态），**不是失败** |
-| `failed` | 所有数据源均不可用，`estimated_nav` 为 NULL，`error_msg` 说明原因 |
+| 值              | 含义                                                              |
+| --------------- | ----------------------------------------------------------------- |
+| `available`     | 成功算出估值                                                      |
+| `not_supported` | 接口明确无实时估值（主动基金常态），**不是失败**                  |
+| `failed`        | 所有数据源均不可用，`estimated_nav` 为 NULL，`error_msg` 说明原因 |
 
 `source` 语义：`api`（消费第三方估值结果）/ `synthetic`（自主加权合成）/ `fallback`（代理 ETF 近似）。
 
@@ -331,13 +335,13 @@ sqlite3 fund_valuation.db "DELETE FROM valuation WHERE ts < date('now','-90 day'
 `.github/workflows/fetch_data.yml` 把上面的 cron 方案搬到云端：**每 5 分钟跑一次 `--once`，
 数据库文件通过 `actions/cache` 在运行之间接力**，无需自备服务器。
 
-| 环节 | 做法 |
-|---|---|
-| 触发 | `cron: "*/5 * * * *"` + 手动 `workflow_dispatch` |
-| 执行 | `.venv/bin/python -m fund_valuation.main --config fund_config.yml --once` |
-| 持久化 | `actions/cache`，路径为 `fund_valuation.db`（含 `-wal` / `-shm`） |
-| 串行 | `concurrency.cancel-in-progress: false`，上一轮没跑完时排队，避免两个进程同时写库 |
-| 可观测 | 每轮把「最新一条/基金 + 行数 + 库体积」写进 Actions 的 Step Summary |
+| 环节   | 做法                                                                              |
+| ------ | --------------------------------------------------------------------------------- |
+| 触发   | `cron: "*/5 * * * *"` + 手动 `workflow_dispatch`                                  |
+| 执行   | `.venv/bin/python -m fund_valuation.main --config fund_config.yml --once`         |
+| 持久化 | `actions/cache`，路径为 `fund_valuation.db`（含 `-wal` / `-shm`）                 |
+| 串行   | `concurrency.cancel-in-progress: false`，上一轮没跑完时排队，避免两个进程同时写库 |
+| 可观测 | 每轮把「最新一条/基金 + 行数 + 库体积」写进 Actions 的 Step Summary               |
 
 缓存用**滚动 key** 实现"库接力"：`key: fund-db-<run_id>` 保证每轮都是新缓存（否则命中后不再保存），
 `restore-keys: fund-db-` 前缀匹配到最近一份作为起点。旧缓存由 GitHub 按 10 GB 总量 LRU 回收。
